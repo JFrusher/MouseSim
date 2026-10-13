@@ -19,11 +19,7 @@ import main as m
 plt = m.matlab_style()
 C = m.MATLAB_COLORS
 V = m.VIEW
-# MATLAB's default colormap (parula), approximated from its published anchor colours
-PARULA = LinearSegmentedColormap.from_list("parula", [
-    (0.2422, 0.1504, 0.6603), (0.2810, 0.3228, 0.9579), (0.1786, 0.5289, 0.9682),
-    (0.0689, 0.6948, 0.8394), (0.2161, 0.7843, 0.5923), (0.6720, 0.7793, 0.2227),
-    (0.9970, 0.7659, 0.2199), (0.9769, 0.9839, 0.0805)])
+PARULA = LinearSegmentedColormap.from_list("parula", m.PARULA_ANCHORS)  # MATLAB's default colormap
 MATLAB_VIEW = dict(elev=30, azim=-37.5)  # MATLAB's default 3-D camera
 P = m.PATH[220]  # a sensor position on the zigzag
 rng = np.random.default_rng(7)
@@ -39,7 +35,10 @@ def correlation(a, b, p):
   r = m.spectrum(a, p) * np.conj(m.spectrum(b, p))
   if p["whiten"]:
     r = r / (np.abs(r) + 1e-12) ** p["whiten"]
-  return np.fft.fftshift(np.fft.irfft2(r, s=(V, V)), axes=(-2, -1)), r
+  c = np.fft.irfft2(r, s=(m.SIZE, m.SIZE))
+  if m.CORRELATION == "linear":
+    c = c / m.envelope(p, len(c))
+  return np.fft.fftshift(c, axes=(-2, -1)), r
 
 
 def clean_axes(ax):
@@ -108,7 +107,7 @@ def fig_pipeline(p):
   ax.set_title(r"$\log|\hat I_k(\mathbf{f})|$: grain is low-pass")
   clean_axes(ax)
 
-  u = np.arange(V) - V // 2
+  u = np.arange(m.SIZE) - m.SIZE // 2
   uu, vv = np.meshgrid(u, u)
   ax3 = fig.add_subplot(gs[1, :2], projection="3d")
   ax3.plot_surface(uu, vv, c, cmap=PARULA, edgecolor="black", lw=0.15, antialiased=True)
@@ -152,7 +151,7 @@ def fig_params(p):
   # (a) peak shape vs whitening
   ax = axs[0, 0]
   a, b = noisy(P), noisy(P + [1.3, 0])
-  u = np.arange(V) - V // 2
+  u = np.arange(m.SIZE) - m.SIZE // 2
   for j, wh in enumerate([0, 0.5, 1]):
     c = correlation(a, b, p | {"whiten": wh})[0][0]
     iy = np.unravel_index(c.argmax(), c.shape)[0]
@@ -165,7 +164,7 @@ def fig_params(p):
   shifts = np.linspace(0, 4, 17)
   starts = m.PATH[rng.integers(len(m.PATH), size=300)] + rng.random((300, 2))
   for j, wnd in enumerate([0, 0.5, 1]):
-    q = p | {"window": wnd, "gain": 1.0}
+    q = p | {"window": wnd, "gain": 1.0, "gain3": 0.0}
     err = np.array([m.track(m.spectrum(noisy(starts), q), m.spectrum(noisy(starts + [s, 0]), q), q)[:, 0] - s
                     for s in shifts])
     ax.plot(shifts, err.mean(1), "o-", color=C[j], ms=4, label=f"window = {wnd:g}")
@@ -180,7 +179,7 @@ def fig_params(p):
   n, steps, v = 300, 400, np.array([0.375, 0.1])
   starts = np.c_[rng.uniform(150, 300, n), rng.uniform(150, 450, n)]
   for j, rk in enumerate([0, 2, 4, 6]):
-    q = p | {"rekey": rk, "gain": 1.0}
+    q = p | {"rekey": rk, "gain": 1.0, "gain3": 0.0, "loop": 0.0}
     tr = m.Tracker(noisy(starts), (0, 0), q)  # track displacement from each run's start
     rms = [np.sqrt(np.mean(np.sum((tr.update(noisy(starts + k * v)) - k * v) ** 2, 1)))
            for k in range(1, steps + 1)]
@@ -190,13 +189,14 @@ def fig_params(p):
 
   # (d) gain: measured step vs true step
   ax = axs[1, 1]
-  q = p | {"gain": 1.0}
+  q = p | {"gain": 1.0, "gain3": 0.0}
   meas = np.array([m.track(m.spectrum(noisy(starts), q), m.spectrum(noisy(starts + [s, 0]), q), q)[:, 0].mean()
                    for s in shifts])
   ax.plot(shifts, shifts, color="black", lw=0.8, ls="--", label="ideal")
   ax.plot(shifts, meas, "o-", color=C[0], ms=4, label="gain = 1")
-  ax.plot(shifts, meas * p["gain"], "o-", color=C[1], ms=4, label=f"gain = {p['gain']:.3f} (tuned)")
-  ax.set(xlabel=r"true shift $d_x$ (px)", ylabel=r"mean $\hat d_x$ (px)", title="(d) gain undoes the scale error")
+  ax.plot(shifts, meas * (p["gain"] + p["gain3"] * meas**2), "o-", color=C[1], ms=4,
+          label=f"tuned: gain {p['gain']:.3f}, gain3 {p['gain3']:+.4f}")
+  ax.set(xlabel=r"true shift $d_x$ (px)", ylabel=r"mean $\hat d_x$ (px)", title="(d) calibration undoes the scale error")
   ax.legend(loc="upper left")
   fig.tight_layout()
   m.save(fig, "params.png")
@@ -252,7 +252,7 @@ def gif_correlation(p, steps=120, t0=150.0):
   imgs = [noisy(m.route_at(t))[0:1] for t in ts]
   tracker = m.Tracker(imgs[0], m.route_at(ts[0]), p)
   key_img = imgs[0][0]
-  u = np.arange(V) - V // 2
+  u = np.arange(m.SIZE) - m.SIZE // 2
   uu, vv = np.meshgrid(u, u)
   fig = plt.figure(figsize=(11, 4.2), dpi=80)
   gs = fig.add_gridspec(1, 3, width_ratios=[1, 1, 1.6], left=0.02, right=0.98, top=0.86, bottom=0.04, wspace=0.08)
@@ -305,5 +305,5 @@ if __name__ == "__main__":
   if "correlation" in which:
     gif_correlation(p)
   if "untuned" in which:  # density of the untuned tracker, for the before/after pair
-    *_, hist = m.run_batch(runs=2000, p=m.DEFAULT_PARAMS, seed=1)
+    hist = m.run_batch(runs=2000, p=m.DEFAULT_PARAMS, seed=1)[3]
     m.plot_density(hist, m.DEFAULT_PARAMS, "density_untuned.png")

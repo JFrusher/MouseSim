@@ -106,9 +106,9 @@ J(\boldsymbol\theta) = \sqrt{\frac{1}{MT}\sum_{m=1}^{M}\sum_{t=1}^{T} \lVert \ha
 The search is the cross-entropy method. Sample, keep the best quarter, refit:
 
 ```math
-\boldsymbol\theta_i \sim \mathcal N(\boldsymbol\mu, \operatorname{diag}\boldsymbol\sigma^2), \qquad
-\boldsymbol\mu \leftarrow \operatorname{mean}(E), \qquad
-\boldsymbol\sigma \leftarrow \max\!\left(\operatorname{std}(E),\ 0.02\,(\boldsymbol\theta_{\max} - \boldsymbol\theta_{\min})\right)
+\boldsymbol\theta_i \sim \mathcal N(\boldsymbol\mu, \mathrm{diag}\boldsymbol\sigma^2), \qquad
+\boldsymbol\mu \leftarrow \mathrm{mean}(E), \qquad
+\boldsymbol\sigma \leftarrow \max\!\left(\mathrm{std}(E),\ 0.02\,(\boldsymbol\theta_{\max} - \boldsymbol\theta_{\min})\right)
 ```
 
 Each generation scores 16 candidates on 160 runs each. Every candidate sees the same 32 textures and the same noise, so a difference in $`J`$ comes from the parameters and not from luck. Candidate one in generation one is the untuned tracker.
